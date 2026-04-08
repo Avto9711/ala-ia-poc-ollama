@@ -1,0 +1,18 @@
+[project]
+name = "llm-local-exploration"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "chainlit>=2.8.4",
+    "langchain>=1.2.15",
+    "langchain-community>=0.4.1",
+    "langchain-mcp-adapters>=0.1.9",
+    "langchain-ollama>=1.0.1",
+    "langchain-text-splitters>=1.1.0",
+    "fastmcp>=2.10.5",
+    "httpx>=0.28.1",
+    "pypdf>=6.0.0",
+    "ruff>=0.15.9",
+]
