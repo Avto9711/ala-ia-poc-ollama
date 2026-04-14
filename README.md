@@ -54,18 +54,60 @@ You can override the embedding model with `OLLAMA_EMBEDDING_MODEL` and the Ollam
 
 ## Setup
 
+### 1. Install Ollama
+
+Install Ollama for your OS using the official docs:
+
+- macOS: https://docs.ollama.com/macos
+- Linux: https://docs.ollama.com/linux
+- Windows: https://docs.ollama.com/windows
+
+After install, make sure the local Ollama server is available:
+
+```bash
+ollama -v
+ollama list
+```
+
+If you installed the standalone Linux package, start the server first:
+
+```bash
+ollama serve
+```
+
+### 2. Install Python Dependencies
+
 ```bash
 env UV_CACHE_DIR=/tmp/uv-cache uv sync
 ```
 
-Make sure Ollama has the required models:
+### 3. Create The Local Chat Model From `Modelfile`
+
+This repo expects the chat model name `gemma4-e4b-m1-16gb`. The included [Modelfile](/Users/angeltorres/source/llm-local-exploration/Modelfile) builds that local model from the Ollama base model `gemma4:e4b`.
+
+Pull the base model, then create the local named model:
+
+```bash
+ollama pull gemma4:e4b
+ollama create gemma4-e4b-m1-16gb -f ./Modelfile
+```
+
+You can verify that the model was created:
 
 ```bash
 ollama list
+ollama run gemma4-e4b-m1-16gb
+```
+
+### 4. Pull The Embedding Model
+
+The RAG pipeline also needs an embedding model:
+
+```bash
 ollama pull nomic-embed-text
 ```
 
-## Build The RAG Databases
+### 5. Build The RAG Databases
 
 Rebuild both registered PDFs:
 
@@ -80,7 +122,7 @@ env UV_CACHE_DIR=/tmp/uv-cache uv run python -m rag.populate_database --document
 env UV_CACHE_DIR=/tmp/uv-cache uv run python -m rag.populate_database --document coopnama_servicios
 ```
 
-## Run The App
+### 6. Run The App
 
 CLI:
 
@@ -96,12 +138,27 @@ Browser UI:
 env UV_CACHE_DIR=/tmp/uv-cache uv run chainlit run ui.py --host 127.0.0.1 --port 8000
 ```
 
-## Test Retrieval Directly
+### 7. Test Retrieval Directly
 
 ```bash
 env UV_CACHE_DIR=/tmp/uv-cache uv run python -c 'from rag.retriever import build_constitution_retrieval_tool; tool = build_constitution_retrieval_tool(); print(tool.invoke({"query": "¿Cuáles son los requisitos para ser Presidente?"}))'
 env UV_CACHE_DIR=/tmp/uv-cache uv run python -c 'from rag.retriever import build_coopnama_servicios_retrieval_tool; tool = build_coopnama_servicios_retrieval_tool(); print(tool.invoke({"query": "¿Qué servicios ofrece COOPNAMA?"}))'
 ```
+
+## End-To-End Quickstart
+
+For a clean machine, the shortest path is:
+
+```bash
+ollama pull gemma4:e4b
+ollama create gemma4-e4b-m1-16gb -f ./Modelfile
+ollama pull nomic-embed-text
+env UV_CACHE_DIR=/tmp/uv-cache uv sync
+env UV_CACHE_DIR=/tmp/uv-cache uv run python -m rag.populate_database
+env UV_CACHE_DIR=/tmp/uv-cache uv run chainlit run ui.py --host 127.0.0.1 --port 8000
+```
+
+Then open `http://127.0.0.1:8000`.
 
 ## Verification
 
@@ -114,4 +171,5 @@ env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check main.py agent_runtime.py ui.py 
 
 - Spanish queries will usually retrieve better because both PDFs are Spanish-language documents.
 - The CLI and UI share the same agent runtime, so behavior should be consistent.
+- If `ollama run gemma4-e4b-m1-16gb` fails, recreate the local model with `ollama create gemma4-e4b-m1-16gb -f ./Modelfile`.
 - If the Ollama chat model or embedding model is missing, the agent or rebuild commands will fail until Ollama is fixed locally.
