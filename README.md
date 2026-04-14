@@ -1,104 +1,117 @@
 # llm-local-exploration
 
-Local proof of concept for an agent that can:
+Proof of concept for a local agent that can:
 
-- call a FastMCP wrapper around the public `restful-api.dev` object endpoints
-- retrieve grounded context from `constitution.pdf`
-- answer through the existing Ollama chat model in this repo
+- call public `restful-api.dev` endpoints through a FastMCP tool server
+- retrieve grounded context from [constitution.pdf](/Users/angeltorres/source/llm-local-exploration/constitution.pdf) and [coopnama-servicios.pdf](/Users/angeltorres/source/llm-local-exploration/coopnama-servicios.pdf)
+- answer with the existing Ollama chat model
 
-## Components
+## Overview
 
-- [main.py](/Users/angeltorres/source/llm-local-exploration/main.py): CLI entrypoint for a single prompt
+This repo has two user-facing entrypoints:
+
+- [main.py](/Users/angeltorres/source/llm-local-exploration/main.py): CLI for a single prompt
 - [ui.py](/Users/angeltorres/source/llm-local-exploration/ui.py): Chainlit browser UI
-- [agent_runtime.py](/Users/angeltorres/source/llm-local-exploration/agent_runtime.py): shared agent wiring
-- [servers/restful_api_mcp.py](/Users/angeltorres/source/llm-local-exploration/servers/restful_api_mcp.py): FastMCP server for `restful-api.dev`
-- [rag/loader.py](/Users/angeltorres/source/llm-local-exploration/rag/loader.py): PDF loading
-- [rag/index.py](/Users/angeltorres/source/llm-local-exploration/rag/index.py): local constitution index
-- [rag/retriever.py](/Users/angeltorres/source/llm-local-exploration/rag/retriever.py): retrieval tool exposed to the agent
 
-## Model
+Both call [agent_runtime.py](/Users/angeltorres/source/llm-local-exploration/agent_runtime.py), which builds one LangChain agent with:
 
-The generation model is unchanged:
+- `ChatOllama(model="gemma4-e4b-m1-16gb")`
+- MCP tools loaded from [servers/restful_api_mcp.py](/Users/angeltorres/source/llm-local-exploration/servers/restful_api_mcp.py)
+- local RAG tools from [rag/retriever.py](/Users/angeltorres/source/llm-local-exploration/rag/retriever.py)
+
+## RAG Path
+
+The retrieval path lives under [rag/](/Users/angeltorres/source/llm-local-exploration/rag):
+
+- [rag/documents.py](/Users/angeltorres/source/llm-local-exploration/rag/documents.py): registry of supported PDFs
+- [rag/loader.py](/Users/angeltorres/source/llm-local-exploration/rag/loader.py): loads and chunks PDFs
+- [rag/embedding.py](/Users/angeltorres/source/llm-local-exploration/rag/embedding.py): configures `OllamaEmbeddings`
+- [rag/index.py](/Users/angeltorres/source/llm-local-exploration/rag/index.py): opens and queries the Chroma vector stores
+- [rag/retriever.py](/Users/angeltorres/source/llm-local-exploration/rag/retriever.py): exposes retrieval as LangChain tools
+- [rag/populate_database.py](/Users/angeltorres/source/llm-local-exploration/rag/populate_database.py): rebuilds the vector databases
+
+Each supported PDF has its own Chroma persistence directory:
+
+- `data/chroma/constitution`
+- `data/chroma/coopnama-servicios`
+
+The agent uses:
+
+- `retrieve_constitution_context` for constitution questions
+- `retrieve_coopnama_servicios_context` for COOPNAMA services questions
+
+## Models
+
+Chat model:
 
 - `gemma4-e4b-m1-16gb`
 
-The agent is built around `ChatOllama` and will also start the local MCP server subprocess when needed.
+Embedding model:
 
-## Requirements
+- `nomic-embed-text`
 
-- Python `>=3.10`
-- `uv`
-- a working local Ollama runtime
-- the Ollama model `gemma4-e4b-m1-16gb`
+You can override the embedding model with `OLLAMA_EMBEDDING_MODEL` and the Ollama base URL with `OLLAMA_BASE_URL`.
 
-If Ollama is broken locally, the CLI and UI will both fail during inference even if the rest of the repo is correct.
-
-## Install Dependencies
+## Setup
 
 ```bash
 env UV_CACHE_DIR=/tmp/uv-cache uv sync
 ```
 
-## Run The CLI
+Make sure Ollama has the required models:
+
+```bash
+ollama list
+ollama pull nomic-embed-text
+```
+
+## Build The RAG Databases
+
+Rebuild both registered PDFs:
+
+```bash
+env UV_CACHE_DIR=/tmp/uv-cache uv run python -m rag.populate_database
+```
+
+Rebuild one document only:
+
+```bash
+env UV_CACHE_DIR=/tmp/uv-cache uv run python -m rag.populate_database --document constitution
+env UV_CACHE_DIR=/tmp/uv-cache uv run python -m rag.populate_database --document coopnama_servicios
+```
+
+## Run The App
+
+CLI:
 
 ```bash
 env UV_CACHE_DIR=/tmp/uv-cache uv run python main.py "Fetch object 7 from restful-api.dev"
+env UV_CACHE_DIR=/tmp/uv-cache uv run python main.py "¿Cuáles son los requisitos para ser Presidente según la Constitución?"
+env UV_CACHE_DIR=/tmp/uv-cache uv run python main.py "¿Qué servicios ofrece COOPNAMA según el PDF?"
 ```
 
-Example constitution question:
-
-```bash
-env UV_CACHE_DIR=/tmp/uv-cache uv run python main.py "What are the qualifications for President according to the constitution?"
-```
-
-## Run The Browser UI
+Browser UI:
 
 ```bash
 env UV_CACHE_DIR=/tmp/uv-cache uv run chainlit run ui.py --host 127.0.0.1 --port 8000
 ```
 
-Then open:
+## Test Retrieval Directly
 
-- `http://localhost:8000`
-
-Chainlit may log macOS browser-launch errors in this environment when it tries to auto-open a browser. Those messages do not prevent the app from running.
-
-## Data And Indexing
-
-- The source document is [constitution.pdf](/Users/angeltorres/source/llm-local-exploration/constitution.pdf)
-- The local index is created on first retrieval under `data/vectorstore/constitution_index.json`
-- The current retrieval path is a lightweight lexical index with small query expansion for the constitution text
-
-This is enough for the POC, but it is not a semantic-grade RAG system.
-
-## How The RAG Works
-
-The retrieval path in this repo is intentionally simple and local.
-
-1. The user sends a prompt through [main.py](/Users/angeltorres/source/llm-local-exploration/main.py) or [ui.py](/Users/angeltorres/source/llm-local-exploration/ui.py).
-2. Both entrypoints call into [agent_runtime.py](/Users/angeltorres/source/llm-local-exploration/agent_runtime.py), which builds the LangChain agent and registers the `retrieve_constitution_context` tool from [rag/retriever.py](/Users/angeltorres/source/llm-local-exploration/rag/retriever.py).
-3. When the agent needs grounded constitution context, that tool calls `retrieve_relevant_chunks(...)` in [rag/index.py](/Users/angeltorres/source/llm-local-exploration/rag/index.py).
-4. On first use, [rag/index.py](/Users/angeltorres/source/llm-local-exploration/rag/index.py) loads [constitution.pdf](/Users/angeltorres/source/llm-local-exploration/constitution.pdf) via [rag/loader.py](/Users/angeltorres/source/llm-local-exploration/rag/loader.py), splits it into chunks, tokenizes the text, and builds a normalized word-frequency representation for each chunk.
-5. That chunk index is persisted to `data/vectorstore/constitution_index.json` so it does not need to be rebuilt on every request.
-6. For a query, the code tokenizes the question, applies a small English-to-Spanish query expansion map, and computes cosine similarity between the query token weights and each chunk's token weights.
-7. The top matching chunks are returned with page numbers.
-8. The agent uses those returned chunks as context for the final answer.
-
-Important implementation detail:
-
-- This is retrieval over a lexical token index, not an embedding-based vector store.
-- It does not use Chroma, FAISS, or semantic embeddings.
-- It works well enough for the current POC because the document set is small and fixed, but it is a pragmatic shortcut rather than a production RAG design.
+```bash
+env UV_CACHE_DIR=/tmp/uv-cache uv run python -c 'from rag.retriever import build_constitution_retrieval_tool; tool = build_constitution_retrieval_tool(); print(tool.invoke({"query": "¿Cuáles son los requisitos para ser Presidente?"}))'
+env UV_CACHE_DIR=/tmp/uv-cache uv run python -c 'from rag.retriever import build_coopnama_servicios_retrieval_tool; tool = build_coopnama_servicios_retrieval_tool(); print(tool.invoke({"query": "¿Qué servicios ofrece COOPNAMA?"}))'
+```
 
 ## Verification
-
-Useful checks:
 
 ```bash
 env UV_CACHE_DIR=/tmp/uv-cache uv run python -m py_compile main.py agent_runtime.py ui.py rag/*.py servers/*.py
 env UV_CACHE_DIR=/tmp/uv-cache uv run ruff check main.py agent_runtime.py ui.py rag servers
 ```
 
-## Current Limitation
+## Notes
 
-The main blocker on this machine is Ollama itself. If `ollama` crashes during startup, tool wiring and retrieval can still be valid, but end-to-end responses will fail until the local Ollama runtime is fixed.
+- Spanish queries will usually retrieve better because both PDFs are Spanish-language documents.
+- The CLI and UI share the same agent runtime, so behavior should be consistent.
+- If the Ollama chat model or embedding model is missing, the agent or rebuild commands will fail until Ollama is fixed locally.

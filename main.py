@@ -9,7 +9,10 @@ from agent_runtime import invoke_agent
 async def main() -> None:
     prompt = " ".join(sys.argv[1:]).strip()
     if not prompt:
-        raise SystemExit("Usage: uv run python main.py <prompt>")
+        raise SystemExit(
+            "Uso: uv run python main.py <pregunta>  "
+            "(restful-api.dev, constitution.pdf o coopnama-servicios.pdf)"
+        )
 
     result = await invoke_agent([{"role": "user", "content": prompt}])
     print(result)

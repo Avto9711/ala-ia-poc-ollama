@@ -5,8 +5,8 @@ import chainlit as cl
 from agent_runtime import invoke_agent
 
 WELCOME_MESSAGE = (
-    "Local agent UI ready.\n\n"
-    "Ask about `restful-api.dev` objects or ask questions grounded in `constitution.pdf`."
+    "Interfaz local del agente lista.\n\n"
+    "Haz preguntas sobre objetos de `restful-api.dev`, sobre `constitution.pdf` o sobre `coopnama-servicios.pdf` en español."
 )
 
 
@@ -23,7 +23,7 @@ async def on_message(message: cl.Message) -> None:
     try:
         response = await invoke_agent(cl.chat_context.to_openai())
     except Exception as exc:
-        thinking.content = f"Agent execution failed: {exc}"
+        thinking.content = f"Falló la ejecución del agente: {exc}"
         await thinking.update()
         return
 

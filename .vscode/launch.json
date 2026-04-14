@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: CLI main.py",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": [
+        "¿Cuáles son los requisitos para ser Presidente según la Constitución?"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "UV_CACHE_DIR": "/tmp/uv-cache"
+      }
+    },
+    {
+      "name": "Python: Chainlit UI",
+      "type": "python",
+      "request": "launch",
+      "module": "chainlit",
+      "args": [
+        "run",
+        "ui.py",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "UV_CACHE_DIR": "/tmp/uv-cache"
+      }
+    }
+  ]
+}
