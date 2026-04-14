@@ -1,183 +1,137 @@
 from __future__ import annotations
 
-import json
-import math
-import re
-from collections import Counter
-from dataclasses import asdict, dataclass
+import os
+from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
-from typing import Any
+import shutil
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+import chromadb
+from langchain_core.documents import Document
+from langchain_community.vectorstores import Chroma
 
-from rag.loader import load_constitution_documents
+from rag.documents import get_document_spec, list_supported_document_ids
+from rag.embedding import get_embeddings
+from rag.loader import split_pdf_documents
 
-VECTOR_STORE_DIR = Path(__file__).resolve().parents[1] / "data" / "vectorstore"
-INDEX_PATH = VECTOR_STORE_DIR / "constitution_index.json"
-TOKEN_RE = re.compile(r"[A-Za-z0-9']+")
-STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "for",
-    "from",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "their",
-    "there",
-    "this",
-    "to",
-    "with",
-}
-
-QUERY_EXPANSIONS: dict[str, list[str]] = {
-    "articles": ["articulo", "artículos"],
-    "assembly": ["asamblea"],
-    "citizen": ["ciudadano", "ciudadanía"],
-    "citizenship": ["ciudadanía"],
-    "congress": ["congreso"],
-    "constitution": ["constitución"],
-    "court": ["corte"],
-    "courts": ["corte"],
-    "election": ["elección", "elecciones"],
-    "elections": ["elección", "elecciones"],
-    "executive": ["ejecutivo"],
-    "freedom": ["libertad"],
-    "government": ["gobierno"],
-    "judge": ["juez", "judicial"],
-    "judicial": ["judicial"],
-    "law": ["ley", "leyes"],
-    "national": ["nacional"],
-    "people": ["pueblo"],
-    "president": ["presidente"],
-    "rights": ["derechos"],
-    "senate": ["senado"],
-    "senator": ["senador", "senadores"],
-    "voting": ["voto", "votar"],
-    "vote": ["voto", "votar"],
-}
+DEFAULT_TOP_K = 4
+DEFAULT_SCORE_THRESHOLD = 0.25
+DEFAULT_INGEST_BATCH_SIZE = 100
 
 
 @dataclass(frozen=True)
-class ConstitutionChunk:
-    text: str
-    page: int | None
-    source: str
-    embedding: dict[str, float]
+class RetrievedChunk:
+    document: Document
+    score: float
 
 
-def _persisted_index_exists() -> bool:
-    return INDEX_PATH.exists()
-
-
-def _split_documents() -> list[Any]:
-    documents = load_constitution_documents()
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    return splitter.split_documents(documents)
-
-
-def _tokenize(text: str) -> list[str]:
-    tokens = [token.lower() for token in TOKEN_RE.findall(text)]
-    return [token for token in tokens if token not in STOPWORDS]
-
-
-def _normalize_counts(counts: Counter[str]) -> dict[str, float]:
-    magnitude = math.sqrt(sum(value * value for value in counts.values()))
-    if magnitude == 0.0:
-        return {}
-    return {token: value / magnitude for token, value in counts.items()}
-
-
-def _vectorize(text: str) -> dict[str, float]:
-    return _normalize_counts(Counter(_tokenize(text)))
-
-
-def _expand_query(query: str) -> str:
-    lowered = query.lower()
-    additions: list[str] = []
-    for phrase, translations in QUERY_EXPANSIONS.items():
-        if phrase in lowered:
-            additions.extend(translations)
-    if not additions:
-        return query
-    return f"{query} {' '.join(additions)}"
-
-
-def _build_chunks() -> list[ConstitutionChunk]:
-    chunks = _split_documents()
-    records: list[ConstitutionChunk] = []
-
-    for chunk in chunks:
-        records.append(
-            ConstitutionChunk(
-                text=chunk.page_content,
-                page=chunk.metadata.get("page"),
-                source=str(chunk.metadata.get("source", "constitution.pdf")),
-                embedding=_vectorize(chunk.page_content),
-            )
-        )
-
-    return records
-
-
-def _write_index(records: list[ConstitutionChunk]) -> None:
-    VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
-    payload = [asdict(record) for record in records]
-    INDEX_PATH.write_text(json.dumps(payload, ensure_ascii=True), encoding="utf-8")
-
-
-def _read_index() -> list[ConstitutionChunk]:
-    payload = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-    records: list[ConstitutionChunk] = []
-    for item in payload:
-        records.append(
-            ConstitutionChunk(
-                text=item["text"],
-                page=item.get("page"),
-                source=item.get("source", "constitution.pdf"),
-                embedding={str(token): float(weight) for token, weight in item["embedding"].items()},
-            )
-        )
-    return records
-
-
-def build_constitution_index() -> list[ConstitutionChunk]:
-    records = _build_chunks()
-    _write_index(records)
-    return records
-
-
-@lru_cache(maxsize=1)
-def get_constitution_index() -> list[ConstitutionChunk]:
-    if _persisted_index_exists():
-        return _read_index()
-    return build_constitution_index()
-
-
-def cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float:
-    if len(left) > len(right):
-        left, right = right, left
-    return sum(weight * right.get(token, 0.0) for token, weight in left.items())
-
-
-def retrieve_relevant_chunks(query: str, *, k: int = 4) -> list[ConstitutionChunk]:
-    index = get_constitution_index()
-    query_vector = _vectorize(_expand_query(query))
-    ranked = sorted(
-        index,
-        key=lambda record: cosine_similarity(query_vector, record.embedding),
-        reverse=True,
+def _vector_store(document_id: str) -> Chroma:
+    spec = get_document_spec(document_id)
+    spec.persist_directory.mkdir(parents=True, exist_ok=True)
+    client = chromadb.PersistentClient(path=str(spec.persist_directory))
+    return Chroma(
+        collection_name=spec.collection_name,
+        persist_directory=str(spec.persist_directory),
+        client=client,
+        embedding_function=get_embeddings(),
     )
+
+
+def _collection_count(vector_store: Chroma) -> int:
+    collection = getattr(vector_store, "_collection", None)
+    if collection is None:
+        return 0
+    return int(collection.count())
+
+
+def _ingest_batch_size() -> int:
+    return max(1, int(os.getenv("RAG_INGEST_BATCH_SIZE", str(DEFAULT_INGEST_BATCH_SIZE))))
+
+
+def _chunk_id(document_id: str, document: Document, index: int) -> str:
+    page = document.metadata.get("page")
+    if isinstance(page, int):
+        page_part = f"page-{page + 1}"
+    else:
+        page_part = "page-unknown"
+    return f"{document_id}-{page_part}-chunk-{index}"
+
+
+def _seed_vector_store(document_id: str, vector_store: Chroma) -> int:
+    documents = split_pdf_documents(document_id)
+    batch_size = _ingest_batch_size()
+    for start in range(0, len(documents), batch_size):
+        batch_documents = documents[start : start + batch_size]
+        batch_ids = [
+            _chunk_id(document_id, document, index)
+            for index, document in enumerate(batch_documents, start=start)
+        ]
+        vector_store.add_documents(documents=batch_documents, ids=batch_ids)
+    return len(documents)
+
+
+def rebuild_document_database(document_id: str) -> int:
+    spec = get_document_spec(document_id)
+    get_vector_store.cache_clear()
+    if spec.persist_directory.exists():
+        shutil.rmtree(spec.persist_directory)
+
+    fresh_vector_store = _vector_store(document_id)
+    return _seed_vector_store(document_id, fresh_vector_store)
+
+
+@lru_cache(maxsize=None)
+def get_vector_store(document_id: str) -> Chroma:
+    try:
+        vector_store = _vector_store(document_id)
+        if _collection_count(vector_store) == 0:
+            _seed_vector_store(document_id, vector_store)
+        return vector_store
+    except Exception:
+        # Recover from incompatible or corrupted local Chroma state by rebuilding it.
+        rebuild_document_database(document_id)
+        return _vector_store(document_id)
+
+
+def rebuild_all_document_databases() -> dict[str, int]:
+    return {document_id: rebuild_document_database(document_id) for document_id in list_supported_document_ids()}
+
+
+def rebuild_constitution_database() -> int:
+    return rebuild_document_database("constitution")
+
+
+def get_constitution_vector_store() -> Chroma:
+    return get_vector_store("constitution")
+
+
+def retrieve_relevant_chunks(
+    document_id: str,
+    query: str,
+    *,
+    k: int = DEFAULT_TOP_K,
+    score_threshold: float = DEFAULT_SCORE_THRESHOLD,
+) -> list[RetrievedChunk]:
+    if not query.strip():
+        return []
+
+    spec = get_document_spec(document_id)
+    vector_store = get_vector_store(document_id)
+
+    best_by_key: dict[str, RetrievedChunk] = {}
+    results = vector_store.similarity_search_with_relevance_scores(query, k=k)
+    for document, score in results:
+        if score < score_threshold:
+            continue
+
+        page = document.metadata.get("page")
+        source = str(document.metadata.get("source", spec.pdf_path.name))
+        chunk_index = document.metadata.get("chunk_index")
+        key = f"{document_id}:{source}:{page}:{chunk_index}:{document.page_content[:120]}"
+        current = best_by_key.get(key)
+        candidate = RetrievedChunk(document=document, score=float(score))
+
+        if current is None or candidate.score > current.score:
+            best_by_key[key] = candidate
+
+    ranked = sorted(best_by_key.values(), key=lambda item: item.score, reverse=True)
     return ranked[:k]

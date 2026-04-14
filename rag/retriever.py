@@ -2,27 +2,42 @@ from __future__ import annotations
 
 from langchain_core.tools import tool
 
+from rag.documents import get_document_spec
 from rag.index import retrieve_relevant_chunks
 
 
 def _format_chunk(chunk) -> str:
-    if chunk.page is None:
-        location = "unknown page"
+    page = chunk.document.metadata.get("page")
+    if isinstance(page, int):
+        location = f"page {page + 1}"
     else:
-        location = f"page {chunk.page + 1}"
+        location = "unknown page"
 
-    return f"[{location}] {chunk.text.strip()}"
+    document_title = str(
+        chunk.document.metadata.get("document_title", chunk.document.metadata.get("source", "document"))
+    )
+    score = f"{chunk.score:.3f}"
+    text = chunk.document.page_content.strip()
+    return f"[{document_title} | {location} | score {score}] {text}"
 
 
-def build_constitution_retrieval_tool():
-    @tool("retrieve_constitution_context")
-    def retrieve_constitution_context(query: str) -> str:
-        """Retrieve relevant context from constitution.pdf for a user question."""
-        chunks = retrieve_relevant_chunks(query, k=4)
+def build_document_retrieval_tool(document_id: str):
+    spec = get_document_spec(document_id)
 
+    @tool(spec.tool_name, description=spec.description)
+    def retrieve_document_context(query: str) -> str:
+        chunks = retrieve_relevant_chunks(document_id, query, k=4)
         if not chunks:
-            return "No relevant context found in constitution.pdf."
+            return f"No se encontró contexto relevante en {spec.pdf_path.name}."
 
         return "\n\n".join(_format_chunk(chunk) for chunk in chunks)
 
-    return retrieve_constitution_context
+    return retrieve_document_context
+
+
+def build_constitution_retrieval_tool():
+    return build_document_retrieval_tool("constitution")
+
+
+def build_coopnama_servicios_retrieval_tool():
+    return build_document_retrieval_tool("coopnama_servicios")
